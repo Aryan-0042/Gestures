@@ -1,0 +1,9 @@
+import numpy 
+import random
+
+
+list1 = []
+for i in random.randint(0,31):
+    i.append(i)
+
+print(list1)
