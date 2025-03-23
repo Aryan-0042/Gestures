@@ -17,6 +17,10 @@ class PresentationControl:
         # Track last recognized gesture
         self.last_gesture = None
 
+        # For pointer gesture: store if active + fingertip coords
+        self.pointer_active = False
+        self.pointer_pos = None
+
     def start(self):
         self.running = True
         self.run_presentation()
@@ -40,7 +44,7 @@ class PresentationControl:
 
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
-                    # Draw landmarks (optional)
+                    # (Optional) draw landmarks
                     self.mp_draw.draw_landmarks(
                         frame,
                         hand_landmarks,
@@ -55,13 +59,16 @@ class PresentationControl:
 
                     # Predict gesture
                     gesture = self.classifier.predict_gesture(landmarks)
-                    self.perform_action(gesture)
-
+                    self.perform_action(gesture, frame, hand_landmarks)
             else:
-                # Handle transitions if needed
-                self.perform_action(gesture)
+                # No hand detected
+                self.perform_action(gesture, frame, None)
 
-            # === Real-Time Gesture Feedback Overlay ===
+            # If pointer is active, draw a temporary circle at pointer_pos
+            if self.pointer_active and self.pointer_pos:
+                cv2.circle(frame, self.pointer_pos, 10, (0, 255, 0), 2)
+
+            # Real-Time Gesture Feedback
             gesture_text = f"Gesture: {gesture}"
             cv2.putText(
                 frame,
@@ -74,18 +81,27 @@ class PresentationControl:
                 cv2.LINE_AA
             )
 
-            cv2.imshow("Presentation Mode (ANN + Feedback)", frame)
+            cv2.imshow("Presentation Mode (ANN + Pointer)", frame)
             if cv2.waitKey(1) & 0xFF == 27:  # ESC
                 self.stop()
 
         cap.release()
         cv2.destroyAllWindows()
 
-    def perform_action(self, gesture):
+    def perform_action(self, gesture, frame, hand_landmarks):
         """
-        Handle presentation gestures (next_slide, prev_slide, zoom_in, etc.)
-        One-time triggers for each gesture if it differs from self.last_gesture.
+        Handle presentation gestures:
+          - next_slide, prev_slide
+          - zoom_in, zoom_out
+          - pointer (show a green circle on fingertip)
+          - start_slideshow, end_slideshow
+          - no_gesture
         """
+        # If we had pointer active and now gesture changed, disable pointer
+        if self.last_gesture == "pointer" and gesture != "pointer":
+            self.pointer_active = False
+            self.pointer_pos = None
+
         if gesture == "next_slide" and self.last_gesture != "next_slide":
             pyautogui.press("right")
 
@@ -98,7 +114,24 @@ class PresentationControl:
         elif gesture == "zoom_out" and self.last_gesture != "zoom_out":
             pyautogui.hotkey("ctrl", "-")
 
-        # Add more presentation gestures as needed
+        elif gesture == "pointer" and hand_landmarks:
+            # Just display a circle on fingertip each frame
+            h, w, _ = frame.shape
+            index_tip = hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
+            cx, cy = int(index_tip.x * w), int(index_tip.y * h)
+            self.pointer_active = True
+            self.pointer_pos = (cx, cy)
+
+        elif gesture == "start_slideshow" and self.last_gesture != "start_slideshow":
+            # For PowerPoint: F5 often starts the slideshow
+            pyautogui.press("f5")
+
+        elif gesture == "end_slideshow" and self.last_gesture != "end_slideshow":
+            # Press ESC to end the slideshow
+            pyautogui.press("esc")
+
+        elif gesture == "no_gesture":
+            pass
 
         # Update last gesture
         self.last_gesture = gesture

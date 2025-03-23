@@ -24,15 +24,8 @@ class App:
         self.active_mode = None
         self.mode_thread = None
 
-        # Flag controlling the auto-switch detection thread
-        self.auto_switch_running = True
-
         # Create UI elements
         self.create_ui()
-
-        # Start two-hands detection in a separate thread
-        self.auto_switch_thread = threading.Thread(target=self.detect_two_hands, daemon=True)
-        self.auto_switch_thread.start()
 
     def create_ui(self):
         # Title label
@@ -76,11 +69,7 @@ class App:
             text="Usage:\n"
                  " - Cursor Mode: Move, Left/Right Click, Scroll.\n"
                  " - Presentation Mode: Next/Prev Slide, Zoom.\n"
-                 " - Teaching Mode: Draw, Erase, Clear Canvas.\n"
-                 "\n"
-                 "Auto Mode Switch:\n"
-                 " - Show BOTH hands for ~5 seconds at any time.\n"
-                 "   A popup will appear, then the mode will change.",
+                 " - Teaching Mode: Draw, Erase, Clear Canvas.\n",
             fg="#FFFFFF", bg="#222222", font=("Arial", 12)
         )
         self.info_label.pack()
@@ -125,85 +114,10 @@ class App:
             self.mode_thread.join()
             self.mode_thread = None
 
-    def detect_two_hands(self):
-        """
-        Runs continuously, checking for two hands in frame for ~5s.
-        If found, shows a 5s popup, then switches to the next mode.
-        """
-        mp_hands = mp.solutions.hands
-        hands = mp_hands.Hands(
-            max_num_hands=2,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.7
-        )
-        cap = cv2.VideoCapture(0)
-
-        consecutive_frames_with_two_hands = 0
-        required_frames = 300  # ~5 seconds at ~60 FPS (or 150 for ~5s at ~30 FPS)
-
-        mode_list = ["cursor", "presentation", "teaching"]
-        current_mode_index = 0
-
-        while self.auto_switch_running:
-            success, frame = cap.read()
-            if not success:
-                break
-
-            frame = cv2.flip(frame, 1)
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = hands.process(rgb_frame)
-
-            if results.multi_hand_landmarks and len(results.multi_hand_landmarks) == 2:
-                consecutive_frames_with_two_hands += 1
-            else:
-                consecutive_frames_with_two_hands = 0
-
-            # If two hands detected for enough consecutive frames
-            if consecutive_frames_with_two_hands >= required_frames:
-                consecutive_frames_with_two_hands = 0
-
-                # Cycle to next mode
-                current_mode_index = (current_mode_index + 1) % len(mode_list)
-                next_mode = mode_list[current_mode_index]
-
-                # Show popup for 5 seconds
-                self.show_popup(f"Switching to {next_mode.title()} Mode in 5s...", duration=5)
-
-                # Wait 5 seconds so user sees the popup
-                time.sleep(5)
-
-                # Switch mode
-                if next_mode == "cursor":
-                    self.start_cursor_mode()
-                elif next_mode == "presentation":
-                    self.start_presentation_mode()
-                elif next_mode == "teaching":
-                    self.start_teaching_mode()
-
-            # Small sleep to reduce CPU usage
-            time.sleep(0.001)
-
-        cap.release()
-
-    def show_popup(self, message, duration=5):
-        """
-        Creates a self-vanishing popup label at the center of the window.
-        'duration' is in seconds.
-        """
-        popup = tk.Toplevel(self.master)
-        popup.title("")
-        popup.geometry("+400+300")  # approximate center
-        popup.config(bg="#333333")
-
-        label = tk.Label(popup, text=message, fg="#FFFFFF", bg="#333333", font=("Arial", 14, "bold"))
-        label.pack(padx=20, pady=20)
-
-        # Vanish after 'duration' seconds
-        popup.after(duration * 1000, popup.destroy)
-
     def on_closing(self):
-        # Graceful shutdown
-        self.auto_switch_running = False
+        """
+        Graceful shutdown when the window is closed.
+        """
         self.stop_current_mode()
         self.master.destroy()
 
