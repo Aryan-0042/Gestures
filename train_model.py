@@ -1,4 +1,4 @@
-# train_model.py
+#train_model.py
 import pandas as pd
 import numpy as np
 import tensorflow as tf
@@ -6,15 +6,16 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import pickle
 
-# 1. Load External Dataset
-# Expecting 42 feature columns + 1 label column
-data = pd.read_csv(r"C:\Users\aryan\OneDrive\Desktop\Programs\Python\PBL-2\gestures.csv")  # Provide your own dataset
+# 1. Load the Dataset
+#  - Contains all gestures (cursor_move, left_click, right_click, scroll_up, scroll_down,
+#    slide_next, draw, erase, etc.), each row = 42 features + 1 label
+data = pd.read_csv("gestures.csv")  # Adjust path as needed
 
 # 2. Separate Features & Labels
 X = data.iloc[:, :-1].values  # shape (num_samples, 42)
 y = data.iloc[:, -1].values   # shape (num_samples,)
 
-# 3. Encode String Labels to Integers
+# 3. Encode String Labels
 label_encoder = LabelEncoder()
 y_encoded = label_encoder.fit_transform(y)
 
@@ -39,9 +40,9 @@ model.fit(X_train, y_train, epochs=25, batch_size=8, validation_split=0.2)
 loss, acc = model.evaluate(X_test, y_test)
 print(f"Test Accuracy: {acc:.2f}")
 
-# 8. Save Model & Label Encoder
+# 8. Save Keras Model & Label Encoder
 model.save("gesture_model.h5")
 with open("gesture_label_encoder.pkl", "wb") as f:
     pickle.dump(label_encoder, f)
 
-print("Model training complete. 'gesture_model.h5' and 'gesture_label_encoder.pkl' created.")
+print("Training complete. 'gesture_model.h5' + 'gesture_label_encoder.pkl' created.")
