@@ -22,16 +22,19 @@ class CursorControl:
         self.screen_width, self.screen_height = pyautogui.size()
         self.running = False
 
-        # Track states
-        self.is_holding = False
+        # Track last recognized gesture
         self.last_gesture = None
+
+        # Cursor movement smoothing
         self.smooth_x = None
         self.smooth_y = None
-        self.alpha = 0.2  # smoothing factor
+        self.alpha = 0.2  # smoothing factor for cursor
 
-        # Scroll handling
-        self.scroll_count = 0
-        self.max_scroll_speed = 20
+        # Velocity-based scrolling
+        self.scroll_velocity = 0.0     # current scroll velocity
+        self.scroll_accel = 1.4        # how fast velocity changes each frame (~40% more than 1.0)
+        self.scroll_damp = 0.8        # damping factor when no scroll gesture
+        self.scroll_min_threshold = 0.5  # if abs(velocity) < threshold, set to 0
 
     def start(self):
         self.running = True
@@ -72,6 +75,9 @@ class CursorControl:
             else:
                 self.perform_action(gesture, None)
 
+            # Apply velocity-based scrolling
+            self.apply_smooth_scrolling()
+
             # Display recognized gesture
             cv2.putText(
                 frame,
@@ -84,7 +90,7 @@ class CursorControl:
                 cv2.LINE_AA,
             )
 
-            cv2.imshow("Gesture Control (Single TFLite)", frame)
+            cv2.imshow("Gesture Control (Smooth Scroll)", frame)
             if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit
                 self.stop()
 
@@ -93,21 +99,15 @@ class CursorControl:
 
     def perform_action(self, gesture, hand_landmarks):
         """
-        Handles all gestures: 
-         - cursor_move, left_click, right_click, hold_click, scroll_up, scroll_down
-         - double_click (newly added)
-         - Potential presentation or teaching gestures (slide_next, draw, etc.)
+        Handles gestures:
+         - cursor_move, left_click, right_click, double_click
+         - scroll_up, scroll_down
+         - Possibly other gestures like slide_next, zoom_in, etc.
+         - 'hold_click' has been removed entirely.
         """
 
-        # If we were holding click and gesture changed, release mouse
-        if self.last_gesture == "hold_click" and gesture != "hold_click":
-            pyautogui.mouseUp()
-            self.is_holding = False
-
         if gesture == "cursor_move" and hand_landmarks:
-            index_tip = hand_landmarks.landmark[
-                mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP
-            ]
+            index_tip = hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
             x_new = int(index_tip.x * self.screen_width)
             y_new = int(index_tip.y * self.screen_height)
             if self.smooth_x is None or self.smooth_y is None:
@@ -117,50 +117,29 @@ class CursorControl:
                 self.smooth_x = self.alpha * x_new + (1 - self.alpha) * self.smooth_x
                 self.smooth_y = self.alpha * y_new + (1 - self.alpha) * self.smooth_y
             pyautogui.moveTo(int(self.smooth_x), int(self.smooth_y))
-            self.scroll_count = 0
 
         elif gesture == "no_gesture":
-            self.scroll_count = 0
+            pass
 
         elif gesture == "left_click":
             if self.last_gesture != "left_click":
                 pyautogui.click()
-            self.scroll_count = 0
 
         elif gesture == "right_click":
             if self.last_gesture != "right_click":
                 pyautogui.rightClick()
-            self.scroll_count = 0
-
-        elif gesture == "hold_click":
-            if self.last_gesture != "hold_click":
-                pyautogui.mouseDown()
-                self.is_holding = True
-            self.scroll_count = 0
-
-        elif gesture == "scroll_up":
-            if self.last_gesture == "scroll_up":
-                self.scroll_count += 1
-            else:
-                self.scroll_count = 1
-            scroll_speed = min(self.scroll_count, self.max_scroll_speed)
-            pyautogui.scroll(scroll_speed)
-
-        elif gesture == "scroll_down":
-            if self.last_gesture == "scroll_down":
-                self.scroll_count += 1
-            else:
-                self.scroll_count = 1
-            scroll_speed = min(self.scroll_count, self.max_scroll_speed)
-            pyautogui.scroll(-scroll_speed)
 
         elif gesture == "double_click":
-            # NEW GESTURE: Double-click
             if self.last_gesture != "double_click":
                 pyautogui.doubleClick()
-            self.scroll_count = 0
 
-        # Additional gestures (presentation/teaching) remain the same
+        elif gesture == "scroll_up":
+            self.scroll_velocity += self.scroll_accel  # accelerate upward
+
+        elif gesture == "scroll_down":
+            self.scroll_velocity -= self.scroll_accel  # accelerate downward
+
+        # Additional gestures for presentation/teaching if needed
         elif gesture == "slide_next":
             pyautogui.press("right")
 
@@ -180,16 +159,19 @@ class CursorControl:
         elif gesture == "clear_canvas":
             pass
 
-        else:
-            # If we had a hold_click or other state, release
-            if self.is_holding:
-                pyautogui.mouseUp()
-                self.is_holding = False
-            self.scroll_count = 0
-
         self.last_gesture = gesture
 
+    def apply_smooth_scrolling(self):
+        """
+        Velocity-based scrolling with damping for a smoother feel.
+        """
+        # Dampen velocity if no active scroll gesture
+        self.scroll_velocity *= self.scroll_damp
 
-if __name__ == "__main__":
-    cc = CursorControl()
-    cc.start()
+        # If velocity is small, zero it out
+        if abs(self.scroll_velocity) < self.scroll_min_threshold:
+            self.scroll_velocity = 0
+
+        # If velocity is >= 1 or <= -1, apply it
+        if abs(self.scroll_velocity) >= 1:
+            pyautogui.scroll(int(self.scroll_velocity))

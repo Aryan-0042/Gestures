@@ -76,7 +76,7 @@ class App:
 
         # Optional image
         try:
-            img = Image.open(r"C:\Users\aryan\Downloads\Gestures.jpg").resize((300, 200))
+            img = Image.open("Gestures.jpg").resize((300, 200))
             self.img_tk = ImageTk.PhotoImage(img)
             img_label = tk.Label(self.master, image=self.img_tk, bg="#222222")
             img_label.pack(pady=10)

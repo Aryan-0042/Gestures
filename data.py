@@ -5,9 +5,9 @@ import os
 import pandas as pd
 
 # Default gesture name (if user doesn't type a new one)
-DEFAULT_GESTURE = "no_gesture"
+DEFAULT_GESTURE = "double_click"
 OUTPUT_CSV = "gestures.csv"
-MAX_SAMPLES = 1000 # Total samples we want for each gesture
+MAX_SAMPLES = 2000 # Total samples we want for each gesture
 
 def analyze_dataset(csv_file):
     """Shows basic info about the dataset: row count, columns, gesture distribution."""

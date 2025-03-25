@@ -34,7 +34,7 @@ model = tf.keras.models.Sequential([
 model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 # 6. Train
-model.fit(X_train, y_train, epochs=25, batch_size=8, validation_split=0.2)
+model.fit(X_train, y_train, epochs=30, batch_size=8, validation_split=0.2)
 
 # 7. Evaluate
 loss, acc = model.evaluate(X_test, y_test)
