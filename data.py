@@ -5,7 +5,7 @@ import os
 import pandas as pd
 
 # Default gesture name (if user doesn't type a new one)
-DEFAULT_GESTURE = "double_click"
+DEFAULT_GESTURE = "no_gesture"
 OUTPUT_CSV = "gestures.csv"
 MAX_SAMPLES = 2000 # Total samples we want for each gesture
 
