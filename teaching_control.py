@@ -1,11 +1,17 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import time
 from gesture_classifier import GestureClassifier
 
 class TeachingControl:
-    def __init__(self):
-        self.classifier = GestureClassifier()
+    def __init__(self, show_gesture=True):
+        # Load the unified TFLite gesture classifier.
+        self.classifier = GestureClassifier(
+            tflite_path="gesture_model.tflite",
+            encoder_path="gesture_label_encoder.pkl"
+        )
+        # Initialize MediaPipe Hands.
         self.mp_hands = mp.solutions.hands.Hands(
             max_num_hands=1,
             min_detection_confidence=0.7,
@@ -14,240 +20,155 @@ class TeachingControl:
         self.mp_draw = mp.solutions.drawing_utils
         self.running = False
 
-        # We keep a separate "canvas" for drawing, so lines persist across frames
+        # Persistent whiteboard canvas (initialized on first frame)
         self.canvas = None
+        
+        # Data structures for stroke management.
+        self.strokes = []       # Each stroke is a dict: {"points": [list of points], "color": (B, G, R), "thickness": int}
+        self.redo_stack = []    # For storing undone strokes.
 
-        # Track the last gesture recognized
-        self.last_gesture = None
+        # Drawing parameters.
+        self.draw_color = (255, 255, 255)  # White
+        self.erase_color = (0, 0, 0)         # Black
+        self.draw_thickness = 3
+        self.erase_thickness = 30          # Increased eraser thickness
 
-        # For freehand drawing or erasing, we store strokes:
-        # Each stroke = {"color": (r,g,b), "points": [(x1,y1), (x2,y2), ...]}
-        self.strokes = []
-        self.redo_stack = []  # For reapplying undone strokes
+        self.eraser_on = False  # Toggle for eraser mode (can be set externally)
 
-        # For pointer (ephemeral), we just draw a circle each frame, no persistence
-        self.pointer_active = False
-        self.pointer_pos = None
+        # For continuous drawing, store the previous fingertip position.
+        self.prev_point = None
+        self.last_gesture = "no_gesture"
+        self.show_gesture = show_gesture
 
-        # Keep track of the last fingertip coords for drawing lines
-        self.prev_x = None
-        self.prev_y = None
+        # Cooldown for clearing the canvas (mapped to "double_click")
+        self.last_clear_time = 0
+        self.clear_cooldown = 2  # seconds
 
-        # Canvas background color (black)
-        self.bg_color = (0, 0, 0)
+    def process_frame(self, frame, overlay=True):
+        """
+        Processes an input frame for teaching mode.
+        - Flips and converts colors.
+        - Initializes the whiteboard canvas if necessary.
+        - Processes hand landmarks with MediaPipe.
+        - Predicts gesture and executes whiteboard actions.
+        - Overlays the gesture label (if enabled) onto the blended output.
+        Returns the resulting frame.
+        """
+        # Flip for mirror effect.
+        frame = cv2.flip(frame, 1)
+        h, w, _ = frame.shape
 
-        # Colors for draw vs. erase
-        self.draw_color = (255, 255, 255)   # white
-        self.erase_color = (0, 0, 0)       # black
+        # Initialize or update the canvas to match the frame dimensions.
+        if self.canvas is None or self.canvas.shape[:2] != (h, w):
+            self.canvas = np.zeros((h, w, 3), dtype=np.uint8)
+            self.canvas[:] = (0, 0, 0)
 
-    def start(self):
-        self.running = True
-        self.run_teaching()
+        # Convert the frame to RGB for hand landmark processing.
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.mp_hands.process(rgb_frame)
 
-    def stop(self):
-        self.running = False
+        gesture = "no_gesture"
+        if results.multi_hand_landmarks:
+            # Process only the first detected hand.
+            hand_landmarks = results.multi_hand_landmarks[0]
+            # Optionally draw landmarks on the frame.
+            if overlay:
+                self.mp_draw.draw_landmarks(frame, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
+            # Extract 42 features (21 x,y pairs) from hand landmarks.
+            landmarks = []
+            for lm in hand_landmarks.landmark:
+                landmarks.extend([lm.x, lm.y])
+            # Predict the gesture.
+            gesture = self.classifier.predict_gesture(landmarks)
+            self.perform_action(gesture, frame, hand_landmarks)
+        else:
+            self.perform_action("no_gesture", frame, None)
 
-    def run_teaching(self):
-        cap = cv2.VideoCapture(0)
-
-        while self.running:
-            success, frame = cap.read()
-            if not success:
-                break
-
-            frame = cv2.flip(frame, 1)
-            h, w, _ = frame.shape
-
-            # Initialize canvas if None
-            if self.canvas is None:
-                self.canvas = np.zeros((h, w, 3), dtype=np.uint8)
-                self.canvas[:] = self.bg_color  # Fill with black
-
-            # Convert to RGB for MediaPipe
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.mp_hands.process(rgb_frame)
-
-            gesture = "no_gesture"
-
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    # (Optional) draw hand landmarks
-                    self.mp_draw.draw_landmarks(frame, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
-
-                    # Extract 42 features
-                    landmarks = []
-                    for lm in hand_landmarks.landmark:
-                        landmarks.append(lm.x)
-                        landmarks.append(lm.y)
-
-                    # Classify gesture
-                    gesture = self.classifier.predict_gesture(landmarks)
-                    self.perform_action(gesture, frame, hand_landmarks)
-            else:
-                # No hand detected
-                self.perform_action(gesture, frame, None)
-
-            # Draw all strokes onto self.canvas
-            self.redraw_strokes()
-
-            # Combine the canvas with the live camera feed for display
-            display_frame = cv2.addWeighted(frame, 0.5, self.canvas, 0.5, 0)
-
-            # If pointer is active, draw ephemeral circle on display_frame
-            if self.pointer_active and self.pointer_pos:
-                cv2.circle(display_frame, self.pointer_pos, 10, (0, 255, 0), 2)
-
-            # Overlay recognized gesture text
-            gesture_text = f"Gesture: {gesture}"
-            cv2.putText(
-                display_frame,
-                gesture_text,
-                (10, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA
-            )
-
-            cv2.imshow("Teaching Mode (Advanced)", display_frame)
-            if cv2.waitKey(1) & 0xFF == 27:
-                self.stop()
-
-        cap.release()
-        cv2.destroyAllWindows()
+        # Blend the live frame with the whiteboard canvas.
+        overlay_frame = cv2.addWeighted(frame, 0.5, self.canvas, 0.5, 0)
+        if overlay and self.show_gesture:
+            cv2.putText(overlay_frame, f"Gesture: {gesture}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        return overlay_frame
 
     def perform_action(self, gesture, frame, hand_landmarks):
         """
-        Gestures:
-          - "draw": freehand lines
-          - "erase": black lines
-          - "clear_canvas": reset board
-          - "pointer": ephemeral highlight
-          - "undo": revert last stroke
-          - "redo": reapply undone stroke
-          - "no_gesture": do nothing
+        Maps the predicted gesture to a whiteboard action:
+         - "cursor_move": Draw or erase freehand.
+         - "double_click": Clear the canvas (with a 2-sec cooldown).
+         - "left_click": Undo the last stroke.
+         - "right_click": Redo the last undone stroke.
+         - Otherwise: Reset the drawing pointer.
         """
-
-        # If we changed from draw/erase to something else, finalize the stroke
-        if self.last_gesture in ["draw", "erase"] and gesture not in ["draw", "erase"]:
-            self.prev_x = None
-            self.prev_y = None
-
-        if gesture == "draw" and hand_landmarks:
-            # Freedraw lines in white
-            h, w, _ = frame.shape
+        h, w, _ = frame.shape
+        now = time.time()
+        current_point = None
+        if hand_landmarks:
             index_tip = hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
-            cx, cy = int(index_tip.x * w), int(index_tip.y * h)
+            current_point = (int(index_tip.x * w), int(index_tip.y * h))
 
-            # If we just started drawing or changed from something else
-            if self.last_gesture != "draw":
-                # Start a new stroke
-                self.strokes.append({"color": self.draw_color, "points": []})
-                self.redo_stack.clear()  # new action invalidates redo stack
-
-            # Add current point to the last stroke
-            self.strokes[-1]["points"].append((cx, cy))
-
-            # If we have a previous point, we can connect them
-            if self.prev_x is not None and self.prev_y is not None:
-                cv2.line(self.canvas, (self.prev_x, self.prev_y), (cx, cy), self.draw_color, 3)
-
-            self.prev_x, self.prev_y = cx, cy
-            self.pointer_active = False  # pointer off
-
-        elif gesture == "erase" and hand_landmarks:
-            # Freedraw lines in black
-            h, w, _ = frame.shape
-            index_tip = hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
-            cx, cy = int(index_tip.x * w), int(index_tip.y * h)
-
-            if self.last_gesture != "erase":
-                # Start a new stroke (black)
-                self.strokes.append({"color": self.erase_color, "points": []})
+        if gesture == "cursor_move":
+            if self.last_gesture != "cursor_move":
+                color = self.erase_color if self.eraser_on else self.draw_color
+                thickness = self.erase_thickness if self.eraser_on else self.draw_thickness
+                self.strokes.append({"points": [], "color": color, "thickness": thickness})
                 self.redo_stack.clear()
+                self.prev_point = None
+            if current_point:
+                self.strokes[-1]["points"].append(current_point)
+                if self.prev_point is not None:
+                    col = self.erase_color if self.eraser_on else self.draw_color
+                    thick = self.erase_thickness if self.eraser_on else self.draw_thickness
+                    cv2.line(self.canvas, self.prev_point, current_point, col, thick)
+                self.prev_point = current_point
 
-            self.strokes[-1]["points"].append((cx, cy))
+        elif gesture == "double_click":
+            # Clear the canvas with a 2-second cooldown.
+            if self.last_gesture != "double_click" and (now - self.last_clear_time) > self.clear_cooldown:
+                self.canvas[:] = (0, 0, 0)
+                self.strokes.clear()
+                self.redo_stack.clear()
+                self.prev_point = None
+                self.last_clear_time = now
 
-            if self.prev_x is not None and self.prev_y is not None:
-                cv2.line(self.canvas, (self.prev_x, self.prev_y), (cx, cy), self.erase_color, 20)
-                # Thicker line for erasing
-
-            self.prev_x, self.prev_y = cx, cy
-            self.pointer_active = False
-
-        elif gesture == "clear_canvas" and self.last_gesture != "clear_canvas":
-            # Reset board
-            self.canvas[:] = self.bg_color
-            self.strokes.clear()
-            self.redo_stack.clear()
-            self.prev_x = None
-            self.prev_y = None
-            self.pointer_active = False
-
-        elif gesture == "pointer" and hand_landmarks:
-            # Just show a circle at fingertip, do not persist
-            h, w, _ = frame.shape
-            index_tip = hand_landmarks.landmark[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
-            cx, cy = int(index_tip.x * w), int(index_tip.y * h)
-            self.pointer_active = True
-            self.pointer_pos = (cx, cy)
-
-            # If we were drawing/erasing, finalize that stroke
-            if self.last_gesture in ["draw", "erase"]:
-                self.prev_x = None
-                self.prev_y = None
-
-        elif gesture == "undo" and self.last_gesture != "undo":
-            # Remove last stroke from self.strokes, push onto redo_stack
-            if self.strokes:
-                last_stroke = self.strokes.pop()
-                self.redo_stack.append(last_stroke)
-                # Redraw everything
+        elif gesture == "left_click":
+            # Undo the last stroke.
+            if self.last_gesture != "left_click" and self.strokes:
+                self.redo_stack.append(self.strokes.pop())
                 self.redraw_canvas()
-            self.pointer_active = False
+                self.prev_point = None
 
-        elif gesture == "redo" and self.last_gesture != "redo":
-            # Reapply last undone stroke
-            if self.redo_stack:
-                stroke = self.redo_stack.pop()
-                self.strokes.append(stroke)
+        elif gesture == "right_click":
+            # Redo the last undone stroke.
+            if self.last_gesture != "right_click" and self.redo_stack:
+                self.strokes.append(self.redo_stack.pop())
                 self.redraw_canvas()
-            self.pointer_active = False
+                self.prev_point = None
 
         else:
-            # no_gesture or unrecognized
-            self.pointer_active = False
-            self.prev_x = None
-            self.prev_y = None
+            self.prev_point = None
 
         self.last_gesture = gesture
 
     def redraw_canvas(self):
-        """
-        Clears self.canvas and redraws all strokes from scratch.
-        Useful after undo/redo or clear.
-        """
+        """Clears and redraws all strokes onto the canvas."""
         if self.canvas is None:
             return
-        self.canvas[:] = self.bg_color  # reset to black
-
-        # Replay each stroke
+        self.canvas[:] = (0, 0, 0)
         for stroke in self.strokes:
-            color = stroke["color"]
-            points = stroke["points"]
-            if len(points) < 2:
-                continue
-            # Draw line segments
-            for i in range(len(points) - 1):
-                cv2.line(self.canvas, points[i], points[i+1], color, 3 if color != (0,0,0) else 20)
+            pts = stroke["points"]
+            col = stroke["color"]
+            thick = stroke["thickness"]
+            if len(pts) > 1:
+                for i in range(len(pts)-1):
+                    cv2.line(self.canvas, pts[i], pts[i+1], col, thick)
 
-    def redraw_strokes(self):
-        """
-        Called each frame to ensure any new partial lines are displayed.
-        If you don't need partial lines, you can rely on redraw_canvas() only after finalizing strokes.
-        """
-        # In this approach, we do partial lines directly in perform_action()
-        # so there's nothing special to do here unless you want partial logic.
-        pass
-
+    def get_color_name(self):
+        """Returns a human-friendly name for the current drawing color."""
+        names = {
+            (255, 255, 255): "White",
+            (0, 0, 255): "Red",
+            (255, 0, 0): "Blue",
+            (0, 255, 0): "Green"
+        }
+        return names.get(self.draw_color, "Custom")
