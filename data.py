@@ -4,10 +4,9 @@ import csv
 import os
 import pandas as pd
 
-# Default gesture name (if user doesn't type a new one)
 DEFAULT_GESTURE = "no_gesture"
 OUTPUT_CSV = "gestures.csv"
-MAX_SAMPLES = 2000 # Total samples we want for each gesture
+MAX_SAMPLES = 2000 # Total samples for each gesture
 
 def analyze_dataset(csv_file):
     """Shows basic info about the dataset: row count, columns, gesture distribution."""
@@ -72,7 +71,6 @@ def main():
     print(f"\nWe need {needed_count} more samples to reach {MAX_SAMPLES} total for '{gesture_name}'.")
     print("Press 'q' to stop at any time.\n")
 
-    # 3) Old code logic (MINIMAL CHANGES)
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
         max_num_hands=1,

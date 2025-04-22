@@ -54,9 +54,10 @@ class CursorControl:
         self.apply_smooth_scrolling()
 
         if overlay:
+            label_to_show = self.label_mapper(gesture) if hasattr(self, "label_mapper") else gesture
             cv2.putText(
                 frame,
-                f"Gesture: {gesture}",
+                f"Gesture: {label_to_show}",
                 (10, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1,
