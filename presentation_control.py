@@ -69,10 +69,11 @@ class PresentationControl:
 
         # overlay text
         if overlay:
-            cv2.putText(frame, raw.replace("_", " ").title(), (10,40),
-                        cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,0),2)
-            cv2.putText(frame, f"Zoom: {self.zoom_counter}", (10,80),
-                        cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,255),2)
+            label_to_show = self.label_mapper(raw) if hasattr(self, "label_mapper") else raw
+            cv2.putText(frame, f"Gesture: {label_to_show}", (10, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.putText(frame, f"Zoom Level: {self.zoom_counter}", (10, 80),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
 
         self.prev_raw = raw
         return frame
