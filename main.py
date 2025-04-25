@@ -2,10 +2,24 @@ import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
 import cv2
+import os, sys
 
 from cursor_control import CursorControl
 from presentation_control import PresentationControl
 from teaching_control import TeachingControl
+
+
+def resource_path(relative_path):
+    """
+    Get absolute path to resource, works for dev and for PyInstaller bundles.
+    """
+    try:
+        # PyInstaller stores temp path in _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 
 class App(tk.Tk):
     def __init__(self):
@@ -181,11 +195,13 @@ class ModePageBase(tk.Frame):
 
             # Load & resize image preserving aspect ratio
             try:
-                img = Image.open(img_path)
-                w, h = img.size
+                full = resource_path(img_path)
+                pil = Image.open(full)
+                w, h = pil.size
                 ratio = min(220/w, 220/h)
-                img = img.resize((int(w*ratio), int(h*ratio)), Image.Resampling.LANCZOS)
-                tkimg = ImageTk.PhotoImage(img)
+                resized = pil.resize((int(w*ratio), int(h*ratio)),Image.Resampling.LANCZOS)
+                tkimg = ImageTk.PhotoImage(resized)
+
             except Exception as ex:
                 print(f"Error loading {img_path}: {ex}")
                 tkimg = None
@@ -262,7 +278,6 @@ class ModePageBase(tk.Frame):
     def process_mode_logic(self, frame):
         return frame
     
-
 
 class CursorControlPage(ModePageBase):
     def __init__(self, parent, controller):
@@ -347,13 +362,12 @@ class TeachingModePage(ModePageBase):
     def map_label_for_display(self, raw_label):
         mapping = {
             "cursor_move": "Draw",
-            "peace_sign": "Erase",
+            "double_click": "Erase",
             "scroll_up": "Clear Canvas",
             "left_click": "Undo",
             "right_click": "Redo",
 
             # Not used in this mode
-            "double_click": "",
             "scroll_down": "",
             "next_slide": "",
             "prev_slide": ""
@@ -373,3 +387,4 @@ class TeachingModePage(ModePageBase):
 if __name__ == "__main__":
     app = App()
     app.mainloop()
+    
